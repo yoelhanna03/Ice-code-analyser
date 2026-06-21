@@ -1,3 +1,20 @@
+# --- Environnement virtuel Python ---
 ice_env/
+venv/
+.env/
+__pycache__/
+*.pyc
+
+# --- Dossiers temporaires de Google Drive ---
 .tmp.driveupload/
 .tmp.drivedownload/
+
+# --- Sauvegardes de l'IA (Poids et Logs) ---
+checkpoints/
+outputs/
+
+# --- Fichiers système et IDE ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

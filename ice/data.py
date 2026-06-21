@@ -1,8 +1,9 @@
-from datasets import load_dataset
+import os
+import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-import torch
-
+from datasets import load_dataset
+import lightning as L
 
 class CodeDataset(Dataset):
     def __init__(self, dataset, tokenizer, max_length=512):
@@ -15,12 +16,9 @@ class CodeDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.dataset[idx]
-
-        code = str(item["code"])
-        label = int(item["label"])
-
+        
         encoding = self.tokenizer(
-            code,
+            str(item["func"]),
             truncation=True,
             padding="max_length",
             max_length=self.max_length,
@@ -30,46 +28,54 @@ class CodeDataset(Dataset):
         return {
             "input_ids": encoding["input_ids"].squeeze(0),
             "attention_mask": encoding["attention_mask"].squeeze(0),
-            "label": torch.tensor(label, dtype=torch.long)
+            "label": torch.tensor(int(item["target"]), dtype=torch.long)
         }
 
+class DevignDataModule(L.LightningDataModule):
+    def __init__(self, model_name="microsoft/codebert-base", batch_size=8, max_length=512):
+        super().__init__()
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.tokenizer = None
+        self.datasets = {}
 
-def get_dataloaders(hparams):
+    def prepare_data(self):
+        load_dataset("DetectVul/devign")
 
-    dataset = load_dataset("DetectVul/devign")
+    def setup(self, stage=None):
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        raw_dataset = load_dataset("DetectVul/devign")
+        
+        if stage == "fit" or stage is None:
+            self.datasets["train"] = CodeDataset(raw_dataset["train"], self.tokenizer, self.max_length)
+            self.datasets["val"] = CodeDataset(raw_dataset["validation"], self.tokenizer, self.max_length)
+        if stage == "test" or stage is None:
+            self.datasets["test"] = CodeDataset(raw_dataset["test"], self.tokenizer, self.max_length)
 
-    def preprocess(ex):
-        return {
-            "code": ex["func"],
-            "label": ex["target"]
-        }
+    def train_dataloader(self):
+        return DataLoader(
+            self.datasets["train"], 
+            batch_size=self.batch_size, 
+            shuffle=True, 
+            num_workers=os.cpu_count() or 2, 
+            pin_memory=torch.cuda.is_available()
+        )
 
-    dataset = dataset.map(preprocess)
+    def val_dataloader(self):
+        return DataLoader(
+            self.datasets["val"], 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=os.cpu_count() or 2, 
+            pin_memory=torch.cuda.is_available()
+        )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "microsoft/codebert-base"
-    )
-
-    train_ds = CodeDataset(dataset["train"], tokenizer)
-    val_ds = CodeDataset(dataset["validation"], tokenizer)
-    test_ds = CodeDataset(dataset["test"], tokenizer)
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=hparams.batch_size,
-        shuffle=True
-    )
-
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=hparams.batch_size,
-        shuffle=False
-    )
-
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=hparams.batch_size,
-        shuffle=False
-    )
-
-    return train_loader, val_loader, test_loader
+    def test_dataloader(self):
+        return DataLoader(
+            self.datasets["test"], 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=os.cpu_count() or 2, 
+            pin_memory=torch.cuda.is_available()
+        )
